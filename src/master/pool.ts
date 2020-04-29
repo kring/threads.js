@@ -95,6 +95,12 @@ export interface Pool<ThreadType extends Thread> {
    * @param force Set to `true` to kill the thread even if it cannot be stopped gracefully.
    */
   terminate(force?: boolean): Promise<void>
+
+  /**
+   * Terminates the given thread and replaces it in the pool with a fresh one.
+   * @param thread The thread to terminate.
+   */
+  terminateThread(thread: ThreadType): Promise<void>;
 }
 
 export interface PoolOptions {
@@ -124,6 +130,7 @@ class WorkerPool<ThreadType extends Thread> implements Pool<ThreadType> {
   private isClosing = false
   private nextTaskID = 1
   private taskQueue: Array<QueuedTask<ThreadType, any>> = []
+  private readonly spawnWorker: () => Promise<ThreadType>
 
   constructor(
     spawnWorker: () => Promise<ThreadType>,
@@ -135,6 +142,7 @@ class WorkerPool<ThreadType extends Thread> implements Pool<ThreadType> {
 
     const { size = defaultPoolSize } = options
 
+    this.spawnWorker = spawnWorker;
     this.debug = DebugLogger(`threads:pool:${slugify(options.name || String(nextPoolID++))}`)
     this.options = options
     this.workers = spawnWorkers(spawnWorker, size)
@@ -382,6 +390,20 @@ class WorkerPool<ThreadType extends Thread> implements Pool<ThreadType> {
     await Promise.all(
       this.workers.map(async worker => Thread.terminate(await worker.init))
     )
+  }
+
+  public async terminateThread(thread: ThreadType) {
+    const workers = await Promise.all(this.workers.map(descriptor => descriptor.init));
+    const index = workers.indexOf(thread);
+    if (index < 0) {
+      return;
+    }
+
+    await Thread.terminate(thread);
+    this.workers[index] = {
+      init: this.spawnWorker(),
+      runningTasks: []
+    }
   }
 }
 
